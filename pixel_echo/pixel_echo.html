@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Pixel Echo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f0f1a;
+      --ui: #1a1a2e;
+      --accent: #7ec8e3;
+      --danger: #e76f51;
+      --text: #e8e8f0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Courier New", monospace;
+      overflow: hidden;
+      touch-action: none;
+      user-select: none;
+    }
+    #game {
+      display: block;
+      margin: 0 auto;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      background: #000;
+    }
+    #ui {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+    .panel {
+      position: absolute;
+      background: rgba(15, 15, 26, 0.92);
+      border: 3px solid #4a4a6a;
+      padding: 12px 16px;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    #dialogue {
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(520px, 92vw);
+      min-height: 90px;
+      display: none;
+    }
+    #dialogue .name {
+      color: var(--accent);
+      font-weight: bold;
+      margin-bottom: 6px;
+    }
+    #hud {
+      top: 12px;
+      left: 12px;
+      display: flex;
+      gap: 16px;
+    }
+    #combat-ui {
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    .btn {
+      background: #2a2a4a;
+      border: 2px solid #6a6a9a;
+      color: var(--text);
+      padding: 10px 18px;
+      font-family: inherit;
+      font-size: 14px;
+      cursor: pointer;
+      pointer-events: auto;
+    }
+    .btn:hover, .btn:active {
+      background: #3a3a6a;
+      border-color: var(--accent);
+    }
+    #title-screen {
+      position: fixed;
+      inset: 0;
+      background: #0a0a14;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      z-index: 20;
+      pointer-events: auto;
+    }
+    #title-screen h1 {
+      font-size: clamp(32px, 8vw, 56px);
+      letter-spacing: 4px;
+      color: var(--accent);
+      margin-bottom: 8px;
+      text-shadow: 0 0 20px rgba(126, 200, 227, 0.4);
+    }
+    #title-screen p {
+      opacity: 0.7;
+      margin-bottom: 32px;
+      font-size: 14px;
+    }
+    #start-btn {
+      padding: 14px 36px;
+      font-size: 18px;
+      background: #1a1a3a;
+      border: 3px solid var(--accent);
+      color: var(--accent);
+      cursor: pointer;
+      font-family: inherit;
+    }
+    #start-btn:hover {
+      background: #2a2a5a;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game" width="320" height="180"></canvas>
+
+  <div id="ui">
+    <div id="hud" class="panel">
+      <span>HP: <span id="hp">20</span>/20</span>
+      <span>Zone: <span id="zone">Quiet Village</span></span>
+    </div>
+
+    <div id="dialogue" class="panel">
+      <div class="name" id="speaker">???</div>
+      <div id="dialogue-text">...</div>
+    </div>
+
+    <div id="combat-ui">
+      <button class="btn" id="btn-attack">Attack</button>
+      <button class="btn" id="btn-move">Move</button>
+      <button class="btn" id="btn-item">Item</button>
+      <button class="btn" id="btn-spare">Spare</button>
+    </div>
+  </div>
+
+  <div id="title-screen">
+    <h1>PIXEL ECHO</h1>
+    <p>A journey through memories</p>
+    <button id="start-btn">INIZIA</button>
+  </div>
+
+  <script>
+    // ==================== CONFIG ====================
+    const TILE = 16;
+    const COLS = 20;
+    const ROWS = 11;
+
+    // ==================== STATE ====================
+    const state = {
+      mode: "title",
+      player: { x: 5, y: 5, hp: 20, maxHp: 20, dir: 0 },
+      keys: {},
+      combat: null,
+      zone: "Quiet Village"
+    };
+
+    const map = [
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+      [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,0,0,2,2,2,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,0,0,2,0,2,0,0,1,1,1,0,0,0,0,0,0,0,0,1],
+      [1,0,0,2,0,2,2,2,2,0,1,0,0,0,0,0,0,0,0,1],
+      [1,0,0,2,0,0,0,0,2,0,1,0,0,0,0,0,0,0,0,1],
+      [1,0,0,2,2,2,2,0,2,2,2,2,2,0,0,0,0,0,0,1],
+      [1,0,0,0,0,0,2,0,0,0,0,0,2,0,0,0,0,0,0,1],
+      [1,0,0,0,0,0,2,2,2,2,2,2,2,0,0,0,0,0,0,1],
+      [1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],
+      [1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1],
+    ];
+
+    const tileColors = {
+      0: "#3d5a3d",
+      1: "#2a2a3a",
+      2: "#5a4a3a",
+      3: "#2a4a6a"
+    };
+
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    ctx.imageSmoothingEnabled = false;
+
+    function resize() {
+      const scale = Math.floor(Math.min(window.innerWidth / 320, window.innerHeight / 180));
+      canvas.style.width = (320 * scale) + "px";
+      canvas.style.height = (180 * scale) + "px";
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    window.addEventListener("keydown", e => {
+      state.keys[e.key.toLowerCase()] = true;
+      if (["arrowup","arrowdown","arrowleft","arrowright"," ","z","x"].includes(e.key.toLowerCase())) e.preventDefault();
+    });
+    window.addEventListener("keyup", e => {
+      state.keys[e.key.toLowerCase()] = false;
+    });
+
+    function canWalk(x, y) {
+      if (y < 0 || y >= ROWS || x < 0 || x >= COLS) return false;
+      return map[y][x] !== 1 && map[y][x] !== 3;
+    }
+
+    function showDialogue(speaker, text) {
+      state.mode = "dialogue";
+      document.getElementById("dialogue").style.display = "block";
+      document.getElementById("speaker").textContent = speaker;
+      document.getElementById("dialogue-text").textContent = text;
+    }
+
+    function hideDialogue() {
+      document.getElementById("dialogue").style.display = "none";
+      state.mode = "overworld";
+    }
+
+    function startCombat(enemyName) {
+      state.mode = "combat";
+      state.combat = {
+        enemy: { name: enemyName, hp: 12, maxHp: 12, x: 12, y: 5 },
+        turn: "player",
+        phase: "choose"
+      };
+      document.getElementById("combat-ui").style.display = "flex";
+      document.getElementById("hud").style.display = "none";
+    }
+
+    function endCombat(won) {
+      state.mode = "overworld";
+      state.combat = null;
+      document.getElementById("combat-ui").style.display = "none";
+      document.getElementById("hud").style.display = "flex";
+      if (won) showDialogue("Sistema", "Hai vinto lo scontro!");
+    }
+
+    document.getElementById("btn-attack").onclick = () => {
+      if (!state.combat || state.combat.turn !== "player") return;
+      const c = state.combat;
+      const dist = Math.abs(state.player.x - c.enemy.x) + Math.abs(state.player.y - c.enemy.y);
+      if (dist <= 2) {
+        c.enemy.hp -= 4;
+        if (c.enemy.hp <= 0) { endCombat(true); return; }
+      }
+      c.turn = "enemy";
+      setTimeout(enemyTurn, 600);
+    };
+
+    document.getElementById("btn-move").onclick = () => {
+      if (!state.combat || state.combat.turn !== "player") return;
+      state.combat.phase = "move";
+    };
+
+    document.getElementById("btn-spare").onclick = () => {
+      if (!state.combat) return;
+      endCombat(true);
+      showDialogue("Echo", "Hai scelto di risparmiare...");
+    };
+
+    function enemyTurn() {
+      if (!state.combat) return;
+      const c = state.combat;
+      const dx = state.player.x - c.enemy.x;
+      const dy = state.player.y - c.enemy.y;
+      if (Math.abs(dx) + Math.abs(dy) <= 1) {
+        state.player.hp -= 3;
+        document.getElementById("hp").textContent = state.player.hp;
+        if (state.player.hp <= 0) {
+          endCombat(false);
+          showDialogue("Sistema", "Sei stato sconfitto...");
+          return;
+        }
+      } else {
+        if (Math.abs(dx) > Math.abs(dy)) c.enemy.x += Math.sign(dx);
+        else c.enemy.y += Math.sign(dy);
+      }
+      c.turn = "player";
+      c.phase = "choose";
+    }
+
+    let moveCooldown = 0;
+    function update(dt) {
+      if (state.mode === "title" || state.mode === "dialogue") return;
+
+      if (state.mode === "overworld") {
+        moveCooldown -= dt;
+        if (moveCooldown <= 0) {
+          let dx = 0, dy = 0;
+          if (state.keys["arrowleft"] || state.keys["a"]) dx = -1;
+          if (state.keys["arrowright"] || state.keys["d"]) dx = 1;
+          if (state.keys["arrowup"] || state.keys["w"]) dy = -1;
+          if (state.keys["arrowdown"] || state.keys["s"]) dy = 1;
+
+          if (dx !== 0 || dy !== 0) {
+            const nx = state.player.x + dx;
+            const ny = state.player.y + dy;
+            if (canWalk(nx, ny)) {
+              state.player.x = nx;
+              state.player.y = ny;
+              moveCooldown = 0.12;
+              if (Math.random() < 0.04) startCombat("Shadow Echo");
+            }
+          }
+        }
+
+        if (state.keys["z"] || state.keys[" "]) {
+          state.keys["z"] = false;
+          state.keys[" "] = false;
+          if (state.player.x === 9 && state.player.y === 4) {
+            showDialogue("Villager", "I ricordi qui sono... frammentati. Fai attenzione.");
+          }
+        }
+      }
+
+      if (state.mode === "combat" && state.combat?.phase === "move") {
+        moveCooldown -= dt;
+        if (moveCooldown <= 0) {
+          let dx = 0, dy = 0;
+          if (state.keys["arrowleft"] || state.keys["a"]) dx = -1;
+          if (state.keys["arrowright"] || state.keys["d"]) dx = 1;
+          if (state.keys["arrowup"] || state.keys["w"]) dy = -1;
+          if (state.keys["arrowdown"] || state.keys["s"]) dy = 1;
+
+          if (dx !== 0 || dy !== 0) {
+            const nx = state.player.x + dx;
+            const ny = state.player.y + dy;
+            if (nx >= 3 && nx <= 16 && ny >= 2 && ny <= 9) {
+              state.player.x = nx;
+              state.player.y = ny;
+              moveCooldown = 0.1;
+              state.combat.phase = "choose";
+              state.combat.turn = "enemy";
+              setTimeout(enemyTurn, 500);
+            }
+          }
+        }
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = "#000";
+      ctx.fillRect(0, 0, 320, 180);
+
+      if (state.mode === "title") return;
+
+      if (state.mode === "overworld" || state.mode === "dialogue") {
+        for (let y = 0; y < ROWS; y++) {
+          for (let x = 0; x < COLS; x++) {
+            ctx.fillStyle = tileColors[map[y][x]] || "#333";
+            ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+          }
+        }
+        ctx.fillStyle = "#7ec8e3";
+        ctx.fillRect(state.player.x * TILE + 2, state.player.y * TILE + 2, TILE - 4, TILE - 4);
+        ctx.fillStyle = "#0a0a14";
+        ctx.fillRect(state.player.x * TILE + 4, state.player.y * TILE + 5, 3, 3);
+        ctx.fillRect(state.player.x * TILE + 9, state.player.y * TILE + 5, 3, 3);
+      }
+
+      if (state.mode === "combat" && state.combat) {
+        ctx.fillStyle = "#1a1a2e";
+        ctx.fillRect(0, 0, 320, 180);
+
+        ctx.strokeStyle = "#2a2a4a";
+        for (let x = 3; x <= 17; x++) {
+          for (let y = 2; y <= 10; y++) {
+            ctx.strokeRect(x * TILE, y * TILE, TILE, TILE);
+          }
+        }
+
+        ctx.fillStyle = "#7ec8e3";
+        ctx.fillRect(state.player.x * TILE + 2, state.player.y * TILE + 2, TILE - 4, TILE - 4);
+
+        const e = state.combat.enemy;
+        ctx.fillStyle = "#e76f51";
+        ctx.fillRect(e.x * TILE + 2, e.y * TILE + 2, TILE - 4, TILE - 4);
+
+        ctx.fillStyle = "#333";
+        ctx.fillRect(20, 8, 80, 8);
+        ctx.fillStyle = "#4ade80";
+        ctx.fillRect(20, 8, 80 * (state.player.hp / state.player.maxHp), 8);
+
+        ctx.fillStyle = "#333";
+        ctx.fillRect(220, 8, 80, 8);
+        ctx.fillStyle = "#f87171";
+        ctx.fillRect(220, 8, 80 * (e.hp / e.maxHp), 8);
+
+        ctx.fillStyle = "#aaa";
+        ctx.font = "10px monospace";
+        ctx.fillText("YOU", 20, 28);
+        ctx.fillText(e.name, 220, 28);
+
+        if (state.combat.turn === "player") {
+          ctx.fillStyle = "#7ec8e3";
+          ctx.fillText(state.combat.phase === "move" ? "Muoviti..." : "Tuo turno", 120, 20);
+        } else {
+          ctx.fillStyle = "#e76f51";
+          ctx.fillText("Turno nemico...", 110, 20);
+        }
+      }
+    }
+
+    let last = performance.now();
+    function loop(now) {
+      const dt = Math.min(0.05, (now - last) / 1000);
+      last = now;
+      update(dt);
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    document.getElementById("start-btn").onclick = () => {
+      document.getElementById("title-screen").style.display = "none";
+      state.mode = "overworld";
+      showDialogue("???", "Benvenuto, Echo Walker... I ricordi ti aspettano.");
+    };
+
+    window.addEventListener("keydown", e => {
+      if (state.mode === "dialogue" && (e.key === "z" || e.key === " " || e.key === "Enter")) {
+        hideDialogue();
+      }
+    });
+
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
